@@ -73,6 +73,8 @@ frame = vs.read()
 frame = imutils.resize(frame, width=500)
 (H, W) = frame.shape[:2]
 
+writer = None
+
 if args["output"] is not None:
 	fourcc = cv2.VideoWriter_fourcc(*"MJPG")
 	writer = cv2.VideoWriter(args["output"], fourcc, 30, (W, H), True)
