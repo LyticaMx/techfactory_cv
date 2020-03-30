@@ -17,7 +17,7 @@ a)To read and write back out to video:
 # import the necessary packages
 from pyimagesearch.centroidtracker import CentroidTracker
 from pyimagesearch.trackableobject import TrackableObject
-from imutils.video import VideoStream
+from imutils.video import FileVideoStream, VideoStream
 from imutils.video import FPS
 import numpy as np
 import argparse
@@ -44,6 +44,7 @@ ap.add_argument("-cam", "--camera", type=str, default='r',
 	help="specify which phone camera did you use... frontal (f) or rear (r)")
 ap.add_argument("--orientation", type=str, default='v',
 	help="counter line orientation, vertical or horizontal")
+ap.add_argument("--display", type=int, default='1', help="display of detection frames")
 args = vars(ap.parse_args())
 
 # initialize the list of class labels MobileNet SSD was trained to
@@ -63,15 +64,18 @@ if not args.get("input", False):
 # otherwise, grab a reference to the video file
 else:
 	print("[INFO] opening video file...")
-	vs = cv2.VideoCapture(args["input"])
-
-# initialize the video writer (we'll instantiate later if need be)
-writer = None
+	vs = FileVideoStream(args["input"]).start()
+	time.sleep(3.0)
 
 # initialize the frame dimensions (we'll set them as soon as we read
 # the first frame from the video)
-W = None
-H = None
+frame = vs.read()
+frame = imutils.resize(frame, width=500)
+(H, W) = frame.shape[:2]
+
+if args["output"] is not None:
+	fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+	writer = cv2.VideoWriter(args["output"], fourcc, 30, (W, H), True)
 
 # instantiate our centroid tracker, then initialize a list to store
 # each of our dlib correlation trackers, followed by a dictionary to
@@ -90,16 +94,14 @@ totalUp = 0
 fps = FPS().start()
 
 # loop over frames from the video stream
-while True:
+while vs.more():
 	# grab the next frame and handle if we are reading from either
 	# VideoCapture or VideoStream
 	frame = vs.read()
-	frame = frame[1] if args.get("input", False) else frame
 
-	# if we are viewing a video and we did not grab a frame then we
-	# have reached the end of the video
-	if args["input"] is not None and frame is None:
+	if vs.Q.qsize() == 0:
 		break
+
 
 	# resize the frame to have a maximum width of 500 pixels (the
 	# less data we have, the faster we can process it), then convert
@@ -113,13 +115,6 @@ while True:
 	# if the frame dimensions are empty, set them
 	if W is None or H is None:
 		(H, W) = frame.shape[:2]
-
-	# if we are supposed to be writing a video to disk, initialize
-	# the writer
-	if args["output"] is not None and writer is None:
-		fourcc = cv2.VideoWriter_fourcc(*"MJPG")
-		writer = cv2.VideoWriter(args["output"], fourcc, 30,
-			(W, H), True)
 
 	# initialize the current status along with our list of bounding
 	# box rectangles returned by either (1) our object detector or
@@ -195,13 +190,7 @@ while True:
 			# add the bounding box coordinates to the rectangles list
 			rects.append((startX, startY, endX, endY))
 
-	# draw a horizontal line in the center of the frame -- once an
-	# object crosses this line we will determine whether they were
-	# moving 'up' or 'down'
-	if args["orientation"] == 'v':
-		cv2.line(frame, (W // 2, 0), (W // 2, H), (0, 255, 255), 2)
-	else:
-		cv2.line(frame, (0, H // 2), (W, H // 2), (0, 255, 255), 2)
+
 
 	# use the centroid tracker to associate the (1) old object
 	# centroids with (2) the newly computed object centroids
@@ -247,12 +236,21 @@ while True:
 		# store the trackable object in our dictionary
 		trackableObjects[objectID] = to
 
-		# draw both the ID of the object and the centroid of the
-		# object on the output frame
-		text = "ID {}".format(objectID)
-		cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10),
-			cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-		cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1)
+		if writer:
+			# draw a horizontal line in the center of the frame -- once an
+			# object crosses this line we will determine whether they were
+			# moving 'up' or 'down'
+			if args["orientation"] == 'v':
+				cv2.line(frame, (W // 2, 0), (W // 2, H), (0, 255, 255), 2)
+			else:
+				cv2.line(frame, (0, H // 2), (W, H // 2), (0, 255, 255), 2)
+
+			# draw both the ID of the object and the centroid of the
+			# object on the output frame
+			text = "ID {}".format(objectID)
+			cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10),
+						cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+			cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1)
 
 	# construct a tuple of information we will be displaying on the
 	# frame
@@ -262,18 +260,24 @@ while True:
 		("Status", status),
 	]
 
-	# loop over the info tuples and draw them on our frame
-	for (i, (k, v)) in enumerate(info):
-		text = "{}: {}".format(k, v)
-		cv2.putText(frame, text, (10, H - ((i * 20) + 20)),
-			cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+	if args["display"] == 1:
+		# show the output frame
+		cv2.imshow("Frame", frame)
+
+	else:
+		print("Frame: {}".format(totalFrames))
+		print(info)
 
 	# check to see if we should write the frame to disk
-	if writer is not None:
+	if writer:
+		# loop over the info tuples and draw them on our frame
+		for (i, (k, v)) in enumerate(info):
+			text = "{}: {}".format(k, v)
+			cv2.putText(frame, text, (10, H - ((i * 20) + 20)),
+						cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 		writer.write(frame)
 
-	# show the output frame
-	cv2.imshow("Frame", frame)
+
 	key = cv2.waitKey(1) & 0xFF
 
 	# if the `q` key was pressed, break from the loop
@@ -300,7 +304,7 @@ if not args.get("input", False):
 
 # otherwise, release the video file pointer
 else:
-	vs.release()
+	vs.stop()
 
 # close any open windows
 cv2.destroyAllWindows()
