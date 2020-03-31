@@ -67,17 +67,19 @@ net = cv2.dnn.readNetFromCaffe(args["prototxt"], args["model"])
 if not args.get("input", False):
 	print("[INFO] starting video stream...")
 	vs = VideoStream(src=0).start()
-	time.sleep(2.0)
 
 # otherwise, grab a reference to the video file
 else:
 	print("[INFO] opening video file...")
-	vs = FileVideoStream(args["input"]).start()
-	time.sleep(3.0)
+	# vs = FileVideoStream(args["input"]).start()
+	vs = cv2.VideoCapture(args["input"])
+
+time.sleep(3.0)
 
 # initialize the frame dimensions (we'll set them as soon as we read
 # the first frame from the video)
-frame = vs.read()
+_, frame = vs.read()
+
 frame = imutils.resize(frame, width=500)
 (H, W) = frame.shape[:2]
 
@@ -104,14 +106,13 @@ totalUp = 0
 fps = FPS().start()
 
 # loop over frames from the video stream
-while vs.more():
+while True:
 	# grab the next frame and handle if we are reading from either
 	# VideoCapture or VideoStream
-	frame = vs.read()
+	ret, frame = vs.read()
 
-	if vs.Q.qsize() == 0:
+	if not ret:
 		break
-
 
 	# resize the frame to have a maximum width of 500 pixels (the
 	# less data we have, the faster we can process it), then convert
@@ -328,7 +329,7 @@ if not args.get("input", False):
 
 # otherwise, release the video file pointer
 else:
-	vs.stop()
+	vs.release()
 
 # close any open windows
 cv2.destroyAllWindows()
