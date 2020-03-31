@@ -26,6 +26,8 @@ import time
 import dlib
 import cv2
 
+from multiprocessing import Queue
+
 # construct the argument parse and parse the arguments
 ap = argparse.ArgumentParser()
 ap.add_argument("-p", "--prototxt", required=True,
@@ -46,6 +48,12 @@ ap.add_argument("--orientation", type=str, default='v',
 	help="counter line orientation, vertical or horizontal")
 ap.add_argument("--display", type=int, default='1', help="display of detection frames")
 args = vars(ap.parse_args())
+
+# initialize queue for info and frames
+infq = Queue()
+frq = Queue()
+
+val_ant = [0,0,0]
 
 # initialize the list of class labels MobileNet SSD was trained to
 # detect
@@ -262,6 +270,7 @@ while vs.more():
 		("Status", status),
 	]
 
+
 	if args["display"] == 1:
 		# show the output frame
 		cv2.imshow("Frame", frame)
@@ -278,7 +287,20 @@ while vs.more():
 			cv2.putText(frame, text, (10, H - ((i * 20) + 20)),
 						cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 		writer.write(frame)
+	
+	# Put new info and frame in queue if new tuples are different to queue next item.
+	infq.put(info)
+	frq.put(frame)
 
+	if val_ant[0] != info[0] or val_ant[1] != info[1]:
+		infq.put(info)
+		frq.put(frame)
+		val_ant = info
+	
+	val_ant = info
+
+	if  infq.empty and totalFrames % 1 == 0:
+		print(infq.get())
 
 	key = cv2.waitKey(1) & 0xFF
 
@@ -310,3 +332,5 @@ else:
 
 # close any open windows
 cv2.destroyAllWindows()
+infq.close()
+frq.close()
