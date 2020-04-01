@@ -15,18 +15,28 @@ a)To read and write back out to video:
 '''
 
 # import the necessary packages
-from pyimagesearch.centroidtracker import CentroidTracker
-from pyimagesearch.trackableobject import TrackableObject
+import argparse
+from datetime import datetime
+from multiprocessing import Queue
+import time
+from uuid import getnode as get_mac
+import cv2
+import dlib
 from imutils.video import FileVideoStream, VideoStream
 from imutils.video import FPS
-import numpy as np
-import argparse
 import imutils
-import time
-import dlib
-import cv2
+import numpy as np
+from pyimagesearch.centroidtracker import CentroidTracker
+from pyimagesearch.trackableobject import TrackableObject
+import requests
 
-from multiprocessing import Queue
+def get_mac_address():
+	return hex(get_mac())
+
+def add_mac_address_to_event(event):
+	event["mac-address"] = get_mac_address()
+
+	return event
 
 # construct the argument parse and parse the arguments
 ap = argparse.ArgumentParser()
@@ -53,7 +63,11 @@ args = vars(ap.parse_args())
 infq = Queue()
 frq = Queue()
 
-val_ant = [0,0,0]
+# val_ant = [0,0,0]
+
+# initialize API endpoint
+url_api = 'http://ec2-3-22-35-172.us-east-2.compute.amazonaws.com/counter'
+headers_api = {"accept": "application/json", "Content-Type": "application/json"}
 
 # initialize the list of class labels MobileNet SSD was trained to
 # detect
@@ -83,6 +97,8 @@ frame = imutils.resize(frame, width=500)
 (H, W) = frame.shape[:2]
 
 writer = None
+en = 0
+out = 0
 
 if args["output"] is not None:
 	fourcc = cv2.VideoWriter_fourcc(*"MJPG")
@@ -264,12 +280,9 @@ while vs.more():
 
 	# construct a tuple of information we will be displaying on the
 	# frame
-	info = [
-		("Salidas", totalUp),
-		("Entradas", totalDown),
-		("Status", status),
-	]
-
+	delta_in = abs(en - totalUp)
+	delta_out = abs(out - totalDown)
+	timestamp = datetime.now().isoformat()
 
 	if args["display"] == 1:
 		# show the output frame
@@ -277,7 +290,7 @@ while vs.more():
 
 	else:
 		print("Frame: {}".format(totalFrames))
-		print(info)
+		print("In: {}, Out: {}".format(delta_in, delta_out))
 
 	# check to see if we should write the frame to disk
 	if writer:
@@ -289,18 +302,34 @@ while vs.more():
 		writer.write(frame)
 	
 	# Put new info and frame in queue if new tuples are different to queue next item.
-	infq.put(info)
-	frq.put(frame)
+	#infq.put(info)
+	#frq.put(frame)
 
-	if val_ant[0] != info[0] or val_ant[1] != info[1]:
+	# if val_ant[0] != info[0] or val_ant[1] != info[1]:
+	# 	infq.put(info)
+	# 	frq.put(frame)
+	# 	val_ant = info
+
+	if delta_in > 0:
+		event = 'in'
+		info = {"event": event, "time": timestamp}
 		infq.put(info)
 		frq.put(frame)
-		val_ant = info
-	
-	val_ant = info
 
-	if  infq.empty and totalFrames % 1 == 0:
-		print(infq.get())
+	if delta_out > 0:
+		event = 'out'
+		info = {"event": event, "time": timestamp}
+		infq.put(info)
+		frq.put(frame)
+	
+	# val_ant = info
+
+	if infq.empty() == False and totalFrames % 30 == 0:
+		queue = [infq.get()]
+		print(info, type(info))
+		payload = list(map(add_mac_address_to_event, queue))
+		response = requests.post(url_api, json=payload)
+		print(response.json(), response.status_code)
 
 	key = cv2.waitKey(1) & 0xFF
 
@@ -311,6 +340,8 @@ while vs.more():
 	# increment the total number of frames processed thus far and
 	# then update the FPS counter
 	totalFrames += 1
+	en = totalUp
+	out = totalDown
 	fps.update()
 
 # stop the timer and display FPS information
