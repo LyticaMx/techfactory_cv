@@ -38,6 +38,15 @@ def add_mac_address_to_event(event):
 
 	return event
 
+def sendInfo(infq):
+	for i in range(infq.qsize()):
+		queue = [infq.get()]
+		payload = list(map(add_mac_address_to_event, queue))
+		response = requests.post(url_api, json=payload)
+		print(response.json(), response.status_code)
+
+	print(infq.qsize())
+
 # construct the argument parse and parse the arguments
 ap = argparse.ArgumentParser()
 ap.add_argument("-p", "--prototxt", required=True,
@@ -127,6 +136,7 @@ while vs.more():
 	frame = vs.read()
 
 	if vs.Q.qsize() == 0:
+		time.sleep(0.01)
 		break
 
 	# resize the frame to have a maximum width of 500 pixels (the
@@ -313,28 +323,27 @@ while vs.more():
 	if delta_in > 0:
 		event = 'in'
 		info = {"event": event, "time": timestamp}
-		infq.put(info)
-		frq.put(frame)
+		for i in range(delta_in):
+			infq.put(info)
+			frq.put(frame)
 
 	if delta_out > 0:
 		event = 'out'
 		info = {"event": event, "time": timestamp}
-		infq.put(info)
-		frq.put(frame)
+		for i in range(delta_out):
+			infq.put(info)
+			frq.put(frame)
 	
 	# val_ant = info
 
-	if infq.empty() == False and totalFrames % 30 == 0:
-		queue = [infq.get()]
-		print(info, type(info))
-		payload = list(map(add_mac_address_to_event, queue))
-		response = requests.post(url_api, json=payload)
-		print(response.json(), response.status_code)
+	if infq.empty() == False and totalFrames % 80 == 0:
+		sendInfo(infq)
 
 	key = cv2.waitKey(1) & 0xFF
 
 	# if the `q` key was pressed, break from the loop
 	if key == ord("q"):
+		time.sleep(0.01)
 		break
 
 	# increment the total number of frames processed thus far and
@@ -344,10 +353,20 @@ while vs.more():
 	out = totalDown
 	fps.update()
 
+	if datetime.now().hour >= 20:
+		time.sleep(0.01)
+		break
+
+if not infq.empty():
+	sendInfo(infq)
+	time.sleep(0.01)
+
 # stop the timer and display FPS information
 fps.stop()
 print("[INFO] elapsed time: {:.2f}".format(fps.elapsed()))
 print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
+
+time.sleep(0.01)
 
 # check to see if we need to release the video writer pointer
 if writer is not None:
@@ -361,7 +380,10 @@ if not args.get("input", False):
 else:
 	vs.stop()
 
+time.sleep(3.0)
+
 # close any open windows
 cv2.destroyAllWindows()
+# close Queues
 infq.close()
 frq.close()

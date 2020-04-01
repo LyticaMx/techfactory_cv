@@ -1,16 +1,42 @@
+'''
+ Description: People counter,
+Terminal usage...
+
+a)To read and write back out to video:
+ python people_counter.py --prototxt mobilenet_ssd/MobileNetSSD_deploy.prototxt \
+	--model mobilenet_ssd/MobileNetSSD_deploy.caffemodel --input videos/example_01.mp4 \
+	--output output/output_01.avi
+
+ b)To read from webcam and write back out to disk:
+ python people_counter.py --prototxt mobilenet_ssd/MobileNetSSD_deploy.prototxt \
+	--model mobilenet_ssd/MobileNetSSD_deploy.caffemodel \
+	--output output/webcam_output.avi
+
+'''
+
 # import the necessary packages
 import argparse
-import datetime
+from datetime import datetime
+from multiprocessing import Queue
 import time
+from uuid import getnode as get_mac
 import cv2
 import dlib
 from imutils.video import FileVideoStream, VideoStream
 from imutils.video import FPS
 import imutils
-from multiprocessing import Process, Queue
 import numpy as np
 from pyimagesearch.centroidtracker import CentroidTracker
 from pyimagesearch.trackableobject import TrackableObject
+import requests
+
+def get_mac_address():
+	return hex(get_mac())
+
+def add_mac_address_to_event(event):
+	event["mac-address"] = get_mac_address()
+
+	return event
 
 # construct the argument parse and parse the arguments
 ap = argparse.ArgumentParser()
@@ -33,296 +59,317 @@ ap.add_argument("--orientation", type=str, default='v',
 ap.add_argument("--display", type=int, default='1', help="display of detection frames")
 args = vars(ap.parse_args())
 
-def get_detections(net, blob_queue, rgb_queue, tracker_queue, H, W):
-    """Get face from image queue. This function is used for multiprocessing"""
-    while True:
-        trackers = []
-        # convert the frame to a blob and pass the blob through the
-        # network and obtain the detections
-        blob = blob_queue.get()
-        rgb = rgb_queue.get()
-        net.setInput(blob)
-        detections = net.forward()
+# initialize queue for info and frames
+infq = Queue()
+frq = Queue()
 
-        # loop over the detections
-        for i in np.arange(0, detections.shape[2]):
-            # extract the confidence (i.e., probability) associated
-            # with the prediction
-            confidence = detections[0, 0, i, 2]
+# val_ant = [0,0,0]
 
-            # filter out weak detections by requiring a minimum
-            # confidence
-            if confidence > args["confidence"]:
-                # extract the index of the class label from the
-                # detections list
-                idx = int(detections[0, 0, i, 1])
+# initialize API endpoint
+url_api = 'http://ec2-3-22-35-172.us-east-2.compute.amazonaws.com/counter'
+headers_api = {"accept": "application/json", "Content-Type": "application/json"}
 
-                # if the class label is not a person, ignore it
-                # if CLASSES[idx] != "person":
-                #	continue
+# initialize the list of class labels MobileNet SSD was trained to
+# detect
+CLASSES = ["person"]
 
-                # compute the (x, y)-coordinates of the bounding box
-                # for the object
-                box = detections[0, 0, i, 3:7] * np.array([W, H, W, H])
-                (startX, startY, endX, endY) = box.astype("int")
+# load our serialized model from disk
+print("[INFO] loading model...")
+net = cv2.dnn.readNetFromCaffe(args["prototxt"], args["model"])
 
-                # construct a dlib rectangle object from the bounding
-                # box coordinates and then start the dlib correlation
-                # tracker
-                tracker = dlib.correlation_tracker()
-                rect = dlib.rectangle(startX, startY, endX, endY)
-                tracker.start_track(rgb, rect)
+# if a video path was not supplied, grab a reference to the webcam
+if not args.get("input", False):
+	print("[INFO] starting video stream...")
+	vs = VideoStream(src=0).start()
 
-                # add the tracker to our list of trackers so we can
-                # utilize it during skip frames
-                trackers.append(tracker)
-                # print(trackers)
+# otherwise, grab a reference to the video file
+else:
+	print("[INFO] opening video file...")
+	# vs = FileVideoStream(args["input"]).start()
+	vs = FileVideoStream(args["input"]).start()
 
-        tracker_queue.put(trackers)
+time.sleep(3.0)
 
+# initialize the frame dimensions (we'll set them as soon as we read
+# the first frame from the video)
+frame = vs.read()
+frame = imutils.resize(frame, width=500)
+(H, W) = frame.shape[:2]
 
-def main():
-    """MAIN"""
-    # Video source from webcam or video file.
-    video_src = args["input"]
-    if video_src is None:
-        print("Warning: video source not assigned, default webcam will be used.")
-        video_src = 0
+writer = None
+en = 0
+out = 0
 
-    cap = cv2.VideoCapture(video_src)
-    if video_src == 0:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    _, sample_frame = cap.read()
+if args["output"] is not None:
+	fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+	writer = cv2.VideoWriter(args["output"], fourcc, 30, (W, H), True)
 
-    # initialize the list of class labels MobileNet SSD was trained to
-    # detect and detection network
-    CLASSES = ["person"]
-    net = cv2.dnn.readNetFromCaffe(args["prototxt"], args["model"])
+# instantiate our centroid tracker, then initialize a list to store
+# each of our dlib correlation trackers, followed by a dictionary to
+# map each unique object ID to a TrackableObject
+ct = CentroidTracker(maxDisappeared=40, maxDistance=50)
+trackers = []
+trackableObjects = {}
 
-    # Introduce pose estimator to solve pose. Get one frame to setup the
-    # estimator according to the image size.
-    sample_frame = imutils.resize(sample_frame, width=500)
-    rgb = cv2.cvtColor(sample_frame, cv2.COLOR_BGR2RGB)
-    (H, W) = sample_frame.shape[:2]
+# initialize the total number of frames processed thus far, along
+# with the total number of objects that have moved either up or down
+totalFrames = 0
+totalDown = 0
+totalUp = 0
 
-    # Setup process and queues for multiprocessing.
-    blob_queue = Queue()
-    rgb_queue = Queue()
-    rgb_queue.put(rgb)
-    tracker_queue = Queue()
-    sample_blob = cv2.dnn.blobFromImage(sample_frame, 0.007843, (W, H), 127.5)
-    blob_queue.put(sample_blob)
-    detection_process = Process(target=get_detections, args=(net, blob_queue, rgb_queue, tracker_queue, H, W))
-    detection_process.start()
+# start the frames per second throughput estimator
+fps = FPS().start()
+
+# loop over frames from the video stream
+while vs.more():
+	# grab the next frame and handle if we are reading from either
+	# VideoCapture or VideoStream
+	frame = vs.read()
+
+	if vs.Q.qsize() == 0:
+		break
+
+	# resize the frame to have a maximum width of 500 pixels (the
+	# less data we have, the faster we can process it), then convert
+	# the frame from BGR to RGB for dlib
+	frame = imutils.resize(frame, width=500)
+	if args["camera"] == 'f':
+		frame = cv2.flip(frame, -1)
+	rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 
-    writer = None
+	# if the frame dimensions are empty, set them
+	if W is None or H is None:
+		(H, W) = frame.shape[:2]
 
-    if args["output"] is not None:
-        fourcc = cv2.VideoWriter_fourcc(*"MJPG")
-        writer = cv2.VideoWriter(args["output"], fourcc, 30, (W, H), True)
+	# initialize the current status along with our list of bounding
+	# box rectangles returned by either (1) our object detector or
+	# (2) the correlation trackers
+	status = "En espera"
+	rects = []
 
-    # instantiate our centroid tracker, then initialize a list to store
-    # each of our dlib correlation trackers, followed by a dictionary to
-    # map each unique object ID to a TrackableObject
-    ct = CentroidTracker(maxDisappeared=40, maxDistance=50)
-    trackers = []
-    trackableObjects = {}
+	# check to see if we should run a more computationally expensive
+	# object detection method to aid our tracker
+	if totalFrames % args["skip_frames"] == 0:
+		# set the status and initialize our new set of object trackers
+		status = "Detectando..."
+		trackers = []
 
-    # initialize the total number of frames processed thus far, along
-    # with the total number of objects that have moved either up or down
-    totalFrames = 0
-    totalDown = 0
-    totalUp = 0
+		# convert the frame to a blob and pass the blob through the
+		# network and obtain the detections
+		blob = cv2.dnn.blobFromImage(frame, 0.007843, (W, H), 127.5)
+		net.setInput(blob)
+		detections = net.forward()
 
-    # start the frames per second throughput estimator
-    fps = FPS().start()
-    start_time = datetime.datetime.now()
-    num_frames = 0
+		# loop over the detections
+		for i in np.arange(0, detections.shape[2]):
+			# extract the confidence (i.e., probability) associated
+			# with the prediction
+			confidence = detections[0, 0, i, 2]
 
-    while True:
-        # Read frame, crop it, flip it, suits your needs.
-        frame_got, frame = cap.read()
+			# filter out weak detections by requiring a minimum
+			# confidence
+			if confidence > args["confidence"]:
+				# extract the index of the class label from the
+				# detections list
+				idx = int(detections[0, 0, i, 1])
 
-        if not frame_got:
-            break
+				# if the class label is not a person, ignore it
+				#if CLASSES[idx] != "person":
+				#	continue
 
-        frame = imutils.resize(frame, width=500)
-        if args["camera"] == 'f':
-            frame = cv2.flip(frame, -1)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        rgb_queue.put(rgb)
+				# compute the (x, y)-coordinates of the bounding box
+				# for the object
+				box = detections[0, 0, i, 3:7] * np.array([W, H, W, H])
+				(startX, startY, endX, endY) = box.astype("int")
 
-        # if the frame dimensions are empty, set them
-        if W is None or H is None:
-            (H, W) = frame.shape[:2]
+				# construct a dlib rectangle object from the bounding
+				# box coordinates and then start the dlib correlation
+				# tracker
+				tracker = dlib.correlation_tracker()
+				rect = dlib.rectangle(startX, startY, endX, endY)
+				tracker.start_track(rgb, rect)
 
-        # Feed frame to image queue.
-        blob = cv2.dnn.blobFromImage(frame, 0.007843, (W, H), 127.5)
-        blob_queue.put(blob)
+				# add the tracker to our list of trackers so we can
+				# utilize it during skip frames
+				trackers.append(tracker)
 
-        # initialize the current status along with our list of bounding
-        # box rectangles returned by either (1) our object detector or
-        # (2) the correlation trackers
-        status = "En espera"
-        rects = []
+	# otherwise, we should utilize our object *trackers* rather than
+	# object *detectors* to obtain a higher frame processing throughput
+	else:
+		# loop over the trackers
+		for tracker in trackers:
+			# set the status of our system to be 'tracking' rather
+			# than 'waiting' or 'detecting'
+			status = "Rastreando..."
 
-        # check to see if we should run a more computationally expensive
-        # object detection method to aid our tracker
-        if totalFrames % args["skip_frames"] == 0:
-            # set the status and initialize our new set of object trackers
-            status = "Detectando..."
+			# update the tracker and grab the updated position
+			tracker.update(rgb)
+			pos = tracker.get_position()
 
-            # Get face from box queue.
-            t1 = datetime.datetime.now()
-            trackers = tracker_queue.get()
-            t2 = datetime.datetime.now()
-            print("Time for tracking people location in image: {:.6f} secs".format((t2 - t1).total_seconds()))
+			# unpack the position object
+			startX = int(pos.left())
+			startY = int(pos.top())
+			endX = int(pos.right())
+			endY = int(pos.bottom())
 
-        # otherwise, we should utilize our object *trackers* rather than
-        # object *detectors* to obtain a higher frame processing throughput
-        else:
-            # loop over the trackers
-            for tracker in trackers:
-                # set the status of our system to be 'tracking' rather
-                # than 'waiting' or 'detecting'
-                status = "Rastreando..."
-
-                # update the tracker and grab the updated position
-                tracker.update(rgb)
-                pos = tracker.get_position()
-
-                # unpack the position object
-                startX = int(pos.left())
-                startY = int(pos.top())
-                endX = int(pos.right())
-                endY = int(pos.bottom())
-
-                # add the bounding box coordinates to the rectangles list
-                rects.append((startX, startY, endX, endY))
-
-        # use the centroid tracker to associate the (1) old object
-        # centroids with (2) the newly computed object centroids
-        objects = ct.update(rects)
-
-        # loop over the tracked objects
-        for (objectID, centroid) in objects.items():
-            # check to see if a trackable object exists for the current
-            # object ID
-            to = trackableObjects.get(objectID, None)
-
-            # if there is no existing trackable object, create one
-            if to is None:
-                to = TrackableObject(objectID, centroid)
-
-            # otherwise, there is a trackable object so we can utilize it
-            # to determine direction
-            else:
-                # the difference between the y-coordinate of the *current*
-                # centroid and the mean of *previous* centroids will tell
-                # us in which direction the object is moving (negative for
-                # 'up' and positive for 'down')
-                y = [c[0] for c in to.centroids]
-                direction = centroid[0] - np.mean(y)
-                to.centroids.append(centroid)
-
-                # check to see if the object has been counted or not
-                if not to.counted:
-                    # if the direction is negative (indicating the object
-                    # is moving up) AND the centroid is above the center
-                    # line, count the object
-                    if direction < 0 and centroid[0] < W // 2:
-                        totalUp += 1
-                        to.counted = True
-
-                    # if the direction is positive (indicating the object
-                    # is moving down) AND the centroid is below the
-                    # center line, count the object
-                    elif direction > 0 and centroid[0] > W // 2:
-                        totalDown += 1
-                        to.counted = True
-
-            # store the trackable object in our dictionary
-            trackableObjects[objectID] = to
-
-            if (writer or (args["display"] == 1)):
-                print("YAS")
-                # draw a horizontal line in the center of the frame -- once an
-                # object crosses this line we will determine whether they were
-                # moving 'up' or 'down'
-                if args["orientation"] == 'v':
-                    cv2.line(frame, (W // 2, 0), (W // 2, H), (0, 255, 255), 2)
-                else:
-                    cv2.line(frame, (0, H // 2), (W, H // 2), (0, 255, 255), 2)
-
-                # draw both the ID of the object and the centroid of the
-                # object on the output frame
-                text = "ID {}".format(objectID)
-                cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1)
-
-        # construct a tuple of information we will be displaying on the
-        # frame
-        info = [
-            ("Salidas", totalUp),
-            ("Entradas", totalDown),
-            ("Status", status),
-        ]
-
-        if args["display"] == 1:
-            # show the output frame
-            cv2.imshow("Frame", frame)
-
-        else:
-            print("Frame: {}".format(totalFrames))
-            print(info)
-
-        # check to see if we should write the frame to disk
-        if writer:
-            # loop over the info tuples and draw them on our frame
-            for (i, (k, v)) in enumerate(info):
-                text = "{}: {}".format(k, v)
-                cv2.putText(frame, text, (10, H - ((i * 20) + 20)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-            writer.write(frame)
-
-        key = cv2.waitKey(1) & 0xFF
-
-        # if the `q` key was pressed, break from the loop
-        if key == ord("q"):
-            break
-
-        # increment the total number of frames processed thus far and
-        # then update the FPS counter
-        totalFrames += 1
-        fps.update()
-
-    # stop the timer and display FPS information
-    fps.stop()
-    print("[INFO] elapsed time: {:.2f}".format(fps.elapsed()))
-    print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
-
-    detection_process.terminate()
-    detection_process.join()
-
-    # check to see if we need to release the video writer pointer
-    if writer is not None:
-        writer.release()
-
-    # if we are not using a video file, stop the camera video stream
-    if not args.get("input", False):
-        cap.release()
-
-    # close any open windows
-    cv2.destroyAllWindows()
-
-if __name__ == '__main__':
-    main()
+			# add the bounding box coordinates to the rectangles list
+			rects.append((startX, startY, endX, endY))
 
 
 
+	# use the centroid tracker to associate the (1) old object
+	# centroids with (2) the newly computed object centroids
+	objects = ct.update(rects)
 
+	# loop over the tracked objects
+	for (objectID, centroid) in objects.items():
+		# check to see if a trackable object exists for the current
+		# object ID
+		to = trackableObjects.get(objectID, None)
 
+		# if there is no existing trackable object, create one
+		if to is None:
+			to = TrackableObject(objectID, centroid)
 
+		# otherwise, there is a trackable object so we can utilize it
+		# to determine direction
+		else:
+			# the difference between the y-coordinate of the *current*
+			# centroid and the mean of *previous* centroids will tell
+			# us in which direction the object is moving (negative for
+			# 'up' and positive for 'down')
+			y = [c[0] for c in to.centroids]
+			direction = centroid[0] - np.mean(y)
+			to.centroids.append(centroid)
 
+			# check to see if the object has been counted or not
+			if not to.counted:
+				# if the direction is negative (indicating the object
+				# is moving up) AND the centroid is above the center
+				# line, count the object
+				if direction < 0 and centroid[0] < W // 2:
+					totalUp += 1
+					to.counted = True
+
+				# if the direction is positive (indicating the object
+				# is moving down) AND the centroid is below the
+				# center line, count the object
+				elif direction > 0 and centroid[0] > W // 2:
+					totalDown += 1
+					to.counted = True
+
+		# store the trackable object in our dictionary
+		trackableObjects[objectID] = to
+
+		if writer:
+			# draw a horizontal line in the center of the frame -- once an
+			# object crosses this line we will determine whether they were
+			# moving 'up' or 'down'
+			if args["orientation"] == 'v':
+				cv2.line(frame, (W // 2, 0), (W // 2, H), (0, 255, 255), 2)
+			else:
+				cv2.line(frame, (0, H // 2), (W, H // 2), (0, 255, 255), 2)
+
+			# draw both the ID of the object and the centroid of the
+			# object on the output frame
+			text = "ID {}".format(objectID)
+			cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10),
+						cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+			cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1)
+
+	# construct a tuple of information we will be displaying on the
+	# frame
+	delta_in = abs(en - totalUp)
+	delta_out = abs(out - totalDown)
+	timestamp = datetime.now().isoformat()
+
+	if args["display"] == 1:
+		# show the output frame
+		cv2.imshow("Frame", frame)
+
+	else:
+		print("Frame: {}".format(totalFrames))
+		print("In: {}, Out: {}".format(delta_in, delta_out))
+
+	# check to see if we should write the frame to disk
+	if writer:
+		# loop over the info tuples and draw them on our frame
+		for (i, (k, v)) in enumerate(info):
+			text = "{}: {}".format(k, v)
+			cv2.putText(frame, text, (10, H - ((i * 20) + 20)),
+						cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+		writer.write(frame)
+	
+	# Put new info and frame in queue if new tuples are different to queue next item.
+	#infq.put(info)
+	#frq.put(frame)
+
+	# if val_ant[0] != info[0] or val_ant[1] != info[1]:
+	# 	infq.put(info)
+	# 	frq.put(frame)
+	# 	val_ant = info
+
+	if delta_in > 0:
+		event = 'in'
+		info = {"event": event, "time": timestamp}
+		for i in range(delta_in):
+			infq.put(info)
+			frq.put(frame)
+
+	if delta_out > 0:
+		event = 'out'
+		info = {"event": event, "time": timestamp}
+		for i in range(delta_out):
+			infq.put(info)
+			frq.put(frame)
+	
+	# val_ant = info
+
+	if infq.empty() == False and totalFrames % 80 == 0:
+		for i in range(infq.qsize()):
+			queue = [infq.get()]
+			print(info, type(info))
+			payload = list(map(add_mac_address_to_event, queue))
+			response = requests.post(url_api, json=payload)
+			print(response.json(), response.status_code)
+
+		print(infq.qsize())
+
+	key = cv2.waitKey(1) & 0xFF
+
+	# if the `q` key was pressed, break from the loop
+	if key == ord("q"):
+		break
+
+	# increment the total number of frames processed thus far and
+	# then update the FPS counter
+	totalFrames += 1
+	en = totalUp
+	out = totalDown
+	fps.update()
+
+	if datetime.now().hour >= 20:
+		break
+
+# stop the timer and display FPS information
+fps.stop()
+print("[INFO] elapsed time: {:.2f}".format(fps.elapsed()))
+print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
+
+# check to see if we need to release the video writer pointer
+if writer is not None:
+	writer.release()
+
+# if we are not using a video file, stop the camera video stream
+if not args.get("input", False):
+	vs.stop()
+
+# otherwise, release the video file pointer
+else:
+	vs.stop()
+
+# close any open windows
+cv2.destroyAllWindows()
+infq.close()
+frq.close()
