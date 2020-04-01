@@ -72,14 +72,13 @@ if not args.get("input", False):
 else:
 	print("[INFO] opening video file...")
 	# vs = FileVideoStream(args["input"]).start()
-	vs = cv2.VideoCapture(args["input"])
+	vs = FileVideoStream(args["input"]).start()
 
 time.sleep(3.0)
 
 # initialize the frame dimensions (we'll set them as soon as we read
 # the first frame from the video)
-_, frame = vs.read()
-
+frame = vs.read()
 frame = imutils.resize(frame, width=500)
 (H, W) = frame.shape[:2]
 
@@ -106,12 +105,12 @@ totalUp = 0
 fps = FPS().start()
 
 # loop over frames from the video stream
-while True:
+while vs.more():
 	# grab the next frame and handle if we are reading from either
 	# VideoCapture or VideoStream
-	ret, frame = vs.read()
+	frame = vs.read()
 
-	if not ret:
+	if vs.Q.qsize() == 0:
 		break
 
 	# resize the frame to have a maximum width of 500 pixels (the
@@ -329,7 +328,7 @@ if not args.get("input", False):
 
 # otherwise, release the video file pointer
 else:
-	vs.release()
+	vs.stop()
 
 # close any open windows
 cv2.destroyAllWindows()
