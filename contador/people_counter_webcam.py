@@ -134,10 +134,6 @@ while True:
 	# VideoCapture or VideoStream
 	frame = vs.read()
 
-	if frame:
-		time.sleep(0.01)
-		break
-
 	# resize the frame to have a maximum width of 500 pixels (the
 	# less data we have, the faster we can process it), then convert
 	# the frame from BGR to RGB for dlib
