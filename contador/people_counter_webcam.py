@@ -141,7 +141,9 @@ try:
 		frame = imutils.resize(frame, width=500)
 		if args["camera"] == 'f':
 			frame = cv2.flip(frame, -1)
-		rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+		if args["picamera"] < 0:
+			rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 		# if the frame dimensions are empty, set them
 		if W is None or H is None:
@@ -307,7 +309,8 @@ try:
 				text = "{}: {}".format(k, v)
 				cv2.putText(frame, text, (10, H - ((i * 20) + 20)),
 							cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-			frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+			if args["picamera"] > 0:
+				frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 			writer.write(frame)
 
 		if delta_in > 0:
