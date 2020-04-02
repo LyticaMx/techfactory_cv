@@ -66,13 +66,12 @@ ap.add_argument("-cam", "--camera", type=str, default='r',
 ap.add_argument("--orientation", type=str, default='v',
 	help="counter line orientation, vertical or horizontal")
 ap.add_argument("--display", type=int, default='1', help="display of detection frames")
+ap.add_argument("-p", "--picamera", type=int, default=-1, help="whether or not the Raspberry Pi camera should be used")
 args = vars(ap.parse_args())
 
 # initialize queue for info and frames
 infq = Queue()
 frq = Queue()
-
-# val_ant = [0,0,0]
 
 # initialize API endpoint
 url_api = 'http://ec2-3-22-35-172.us-east-2.compute.amazonaws.com/counter'
@@ -89,7 +88,7 @@ net = cv2.dnn.readNetFromCaffe(args["prototxt"], args["model"])
 # if a video path was not supplied, grab a reference to the webcam
 if not args.get("input", False):
 	print("[INFO] starting video stream...")
-	vs = VideoStream(src=0).start()
+	vs = VideoStream(usePiCamera=args["picamera"] > 0).start()
 
 # otherwise, grab a reference to the video file
 else:
@@ -130,12 +129,12 @@ totalUp = 0
 fps = FPS().start()
 
 # loop over frames from the video stream
-while vs.more():
+while True:
 	# grab the next frame and handle if we are reading from either
 	# VideoCapture or VideoStream
 	frame = vs.read()
 
-	if vs.Q.qsize() == 0:
+	if frame:
 		time.sleep(0.01)
 		break
 
