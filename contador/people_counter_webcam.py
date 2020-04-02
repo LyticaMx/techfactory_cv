@@ -295,14 +295,13 @@ while True:
 		print("Frame: {}".format(totalFrames))
 		print("In: {}, Out: {}".format(delta_in, delta_out))
 
-	info = [
-		("Salidas", totalUp),
-		("Entradas", totalDown),
-		("Status", status),
-	]
-
 	# check to see if we should write the frame to disk
 	if writer:
+		info = [
+			("Salidas", totalUp),
+			("Entradas", totalDown),
+			("Status", status),
+		]
 		# loop over the info tuples and draw them on our frame
 		for (i, (k, v)) in enumerate(info):
 			text = "{}: {}".format(k, v)
