@@ -221,8 +221,6 @@ while True:
 			# add the bounding box coordinates to the rectangles list
 			rects.append((startX, startY, endX, endY))
 
-
-
 	# use the centroid tracker to associate the (1) old object
 	# centroids with (2) the newly computed object centroids
 	objects = ct.update(rects)
@@ -296,6 +294,12 @@ while True:
 	else:
 		print("Frame: {}".format(totalFrames))
 		print("In: {}, Out: {}".format(delta_in, delta_out))
+
+	info = [
+		("Salidas", totalUp),
+		("Entradas", totalDown),
+		("Status", status),
+	]
 
 	# check to see if we should write the frame to disk
 	if writer:
