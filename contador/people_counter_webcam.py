@@ -147,7 +147,7 @@ try:
 
 		else:
 			rgb = frame.copy()
-			frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+			frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
 		# if the frame dimensions are empty, set them
 		if W is None or H is None:
