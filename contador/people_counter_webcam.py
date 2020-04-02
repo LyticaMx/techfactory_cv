@@ -66,7 +66,7 @@ ap.add_argument("-cam", "--camera", type=str, default='r',
 ap.add_argument("--orientation", type=str, default='v',
 	help="counter line orientation, vertical or horizontal")
 ap.add_argument("--display", type=int, default='1', help="display of detection frames")
-ap.add_argument("-p", "--picamera", type=int, default=-1, help="whether or not the Raspberry Pi camera should be used")
+ap.add_argument("--picamera", type=int, default=-1, help="whether or not the Raspberry Pi camera should be used")
 args = vars(ap.parse_args())
 
 # initialize queue for info and frames
