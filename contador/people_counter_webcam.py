@@ -307,6 +307,7 @@ try:
 				text = "{}: {}".format(k, v)
 				cv2.putText(frame, text, (10, H - ((i * 20) + 20)),
 							cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+			frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 			writer.write(frame)
 
 		if delta_in > 0:
