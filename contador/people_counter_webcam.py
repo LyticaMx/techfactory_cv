@@ -145,6 +145,10 @@ try:
 		if args["picamera"] < 0:
 			rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
+		else:
+			rgb = frame.copy()
+			frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
 		# if the frame dimensions are empty, set them
 		if W is None or H is None:
 			(H, W) = frame.shape[:2]
