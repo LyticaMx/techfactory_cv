@@ -80,7 +80,10 @@ headers_api = {"accept": "application/json", "Content-Type": "application/json"}
 
 # initialize the list of class labels MobileNet SSD was trained to
 # detect
-CLASSES = ["person"]
+CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
+	"bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
+	"dog", "horse", "motorbike", "person", "pottedplant", "sheep",
+	"sofa", "train", "tvmonitor"]
 
 # load our serialized model from disk
 print("[INFO] loading model...")
@@ -185,8 +188,8 @@ while vs.more():
 				idx = int(detections[0, 0, i, 1])
 
 				# if the class label is not a person, ignore it
-				#if CLASSES[idx] != "person":
-				#	continue
+				if CLASSES[idx] != "person":
+					continue
 
 				# compute the (x, y)-coordinates of the bounding box
 				# for the object
@@ -304,6 +307,11 @@ while vs.more():
 
 	# check to see if we should write the frame to disk
 	if writer:
+		info = [
+			("Salidas", totalUp),
+			("Entradas", totalDown),
+			("Status", status),
+		]
 		# loop over the info tuples and draw them on our frame
 		for (i, (k, v)) in enumerate(info):
 			text = "{}: {}".format(k, v)
@@ -360,6 +368,8 @@ time.sleep(0.01)
 # check to see if we need to release the video writer pointer
 if writer is not None:
 	writer.release()
+	time.sleep(0.01)
+
 
 # if we are not using a video file, stop the camera video stream
 if not args.get("input", False):

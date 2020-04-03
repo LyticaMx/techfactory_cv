@@ -370,6 +370,7 @@ time.sleep(0.01)
 # check to see if we need to release the video writer pointer
 if writer is not None:
 	writer.release()
+	time.sleep(0.01)
 
 # if we are not using a video file, stop the camera video stream
 if not args.get("input", False):
