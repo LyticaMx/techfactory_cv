@@ -186,8 +186,8 @@ try:
 					idx = int(detections[0, 0, i, 1])
 
 					# if the class label is not a person, ignore it
-					# if CLASSES[idx] != "person":
-					#	continue
+					if CLASSES[idx] != "person":
+						continue
 
 					# compute the (x, y)-coordinates of the bounding box
 					# for the object
