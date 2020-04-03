@@ -79,7 +79,10 @@ headers_api = {"accept": "application/json", "Content-Type": "application/json"}
 
 # initialize the list of class labels MobileNet SSD was trained to
 # detect
-CLASSES = ["person"]
+CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
+	"bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
+	"dog", "horse", "motorbike", "person", "pottedplant", "sheep",
+	"sofa", "train", "tvmonitor"]
 
 # load our serialized model from disk
 print("[INFO] loading model...")
